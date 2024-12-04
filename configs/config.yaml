@@ -1,0 +1,33 @@
+data:
+  class: LinearDataset
+  params:
+    # train_path: datasets/data
+    # eval_path: datasets/data
+    train_batch_size: 8
+    eval_batch_size: 8
+    num_workers: 4
+    w: [3.4]
+    b: [-1.5]
+    n: 1000
+
+model:
+  class: LinearRegressionFromScratch
+  params:
+    num_inputs: 1
+
+loss:
+  # class: CrossEntropyLoss
+  class: MSELoss
+
+optimizer:
+  class: SGD
+  params:
+    lr: 0.001
+
+metrics:
+  - mse
+
+seed: 42
+epochs: 10
+logdir: logs/linear_model
+
