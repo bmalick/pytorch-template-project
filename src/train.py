@@ -61,7 +61,7 @@ class Trainer:
         self.configure_metrics()
         self.configure_callbacks()
 
-        self.get_summary()
+        utils.get_summary(self)
         # TODO: add metrics
         self.results = {"loss": []}
 
@@ -143,5 +143,6 @@ class Trainer:
                                     global_step=self.epoch * len(self.eval_dataloader) + i)
 
         self.logger.info("Epoch: %3d, loss: %5.3f, val_loss: %5.3f" % (self.epoch+1, epoch_loss, eval_epoch_loss))
-        save_results(trainer, "loss", epoch_loss, eval_epoch_loss)
+        utils.save_results(self, "loss", epoch_loss, eval_epoch_loss)
+        # TODO: save model
 

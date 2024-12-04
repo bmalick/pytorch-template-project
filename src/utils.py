@@ -42,10 +42,10 @@ def save_results(trainer, name: str, train_val: float, eval_val: float):
     trainer.results[name].append({"train": train_val, "eval": eval_val})
 
 def save_figures(trainer):
-    for name, results in trainer.results.items()
+    for name, results in trainer.results.items():
         plt.plot([r["train"] for r in results], label="train")
         plt.plot([r["eval"] for r in results], label="eval")
         plt.title(name)
-        plt.savefig(os.path.join(trainer.logdir, "loss-train-vs-eval.jpg"))
+        plt.savefig(os.path.join(trainer.logdir, f"{name}-train-vs-eval.jpg"))
         plt.legend()
         plt.close()
