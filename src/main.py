@@ -1,6 +1,8 @@
+#!/home/malick/miniconda3/envs/pt/bin/python
+
 import sys
 import yaml
-from . import train
+from src import train
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

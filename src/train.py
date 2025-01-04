@@ -13,12 +13,12 @@ from torch.utils.tensorboard import SummaryWriter
 import matplotlib.pyplot as plt
 
 # Local imports
-from . import models
-from . import data
-from . import utils
-# from . import optimizers
-# from . import metrics
-# from . import callbacks
+from src import models
+from src import data
+from src import utils
+# from src import optimizers
+# from src import metrics
+# from src import callbacks
 
 class Trainer:
     def __init__(self, config):

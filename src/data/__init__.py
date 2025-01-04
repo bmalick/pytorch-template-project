@@ -1,3 +1,3 @@
-from .data import *
-from .linear_data import *
-from .data_module import *
+from src.data.data import *
+from src.data.linear_data import *
+from src.data.data_module import *
