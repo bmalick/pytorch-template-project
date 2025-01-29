@@ -45,7 +45,7 @@ class Trainer:
         seed = self.config.get("seed")
         # if seed is not None: utils.set_seed(seed) # TODO: Uncomment for reproductibilty
 
-        self.writter = SummaryWriter(log_dir=logdir)
+        self.writer = SummaryWriter(log_dir=logdir)
 
     def get_config_item(self, name: str):
         args = self.config.get(name)
@@ -115,6 +115,9 @@ class Trainer:
     def fit_epoch(self):
         self.model.train()
         epoch_loss = 0
+        num_samples = 0
+        # TODO: take account the last batch may not have the same ammount of examples
+        # DO the same for metrics
         for i, batch in enumerate(self.train_dataloader):
             loss = self.loss(self.model(*batch[:-1]), batch[-1])
             self.optimizer.zero_grad()
@@ -122,26 +125,30 @@ class Trainer:
             # with torch.no_grad(): self.optimizer.step()
             self.optimizer.step()
 
-            epoch_loss += loss.item()
-            self.writter.add_scalar(tag="Loss/train",
-                                    scalar_value=epoch_loss / (i+1),
+            epoch_loss += loss.item()*batch[0].shape[0]
+            num_samples += batch[0].shape[0]
+            self.writer.add_scalar(tag="Loss/train",
+                                    scalar_value=epoch_loss / num_samples,
                                     global_step=self.epoch * len(self.train_dataloader) + i)
 
 
-        epoch_loss /= len(self.train_dataloader)
+        epoch_loss /= num_samples
 
         # if self.eval_dataloader is None: # TODO: review this variable
         #     return
         self.model.eval()
         eval_epoch_loss = 0
+        num_samples = 0
         for i, batch in enumerate(self.eval_dataloader):
             with torch.no_grad():
                 loss = self.loss(self.model(*batch[:-1]), batch[-1])
-            eval_epoch_loss += loss.item()
-            self.writter.add_scalar(tag="Loss/eval",
-                                    scalar_value=eval_epoch_loss / (i+1),
+            eval_epoch_loss += loss.item()*batch[0].shape[0]
+            num_samples += batch[0].shape[0]
+            self.writer.add_scalar(tag="Loss/eval",
+                                    scalar_value=eval_epoch_loss / num_samples,
                                     global_step=self.epoch * len(self.eval_dataloader) + i)
 
+        eval_epoch_loss /= num_samples
         self.logger.info("Epoch: %3d, loss: %5.3f, val_loss: %5.3f" % (self.epoch+1, epoch_loss, eval_epoch_loss))
         utils.save_results(self, "loss", epoch_loss, eval_epoch_loss)
         # TODO: save model
