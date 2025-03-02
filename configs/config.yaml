@@ -30,4 +30,5 @@ metrics:
 seed: 42
 epochs: 10
 logdir: logs/linear_model
+neptune: bmalick/torch-template-code
 
