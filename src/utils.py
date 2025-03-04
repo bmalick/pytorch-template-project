@@ -22,16 +22,19 @@ def get_summary(trainer):
         str(getattr(trainer, "data", None)) + "\n\n" + "## Model:\n" + str(getattr(trainer, "model", None)) +
         "## Loss:\n" + str(getattr(trainer, "loss", None)) + "\n\n" +
         "## Optimizer:\n" + str(getattr(trainer, "optimizer", None)) +
+        "## Learning rate scheduler:\n" + str(getattr(trainer, "lr_scheduler", None)) +
         "## Metrics:\n" + str(getattr(trainer, "metric_funcs", None)) +
         f"\n\n## Seed: {trainer.config['seed']}" if "seed" in trainer.config else "" +
         f"\n\n## Epochs: {trainer.config['epochs']}"
+
         # "## Model architecture\n" + f"{trainer.model.__str__}\n\n"
     )
 
     with open(os.path.join(trainer.logdir, "summary.txt"), 'w') as f:
         f.write(summary)
 
-    trainer.neptune_run["summary"] = summary
+    if hasattr(trainer, "neptune_run"):
+        trainer.neptune_run["summary"] = summary
 
 def save_results(trainer, name: str, train_val: float, eval_val: float):
     trainer.results[name].append({"train": train_val, "eval": eval_val})

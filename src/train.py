@@ -16,31 +16,10 @@ import neptune
 from src import models
 from src import data
 from src import utils
-# from src import optimizers
+from src import schedulers
 from src import metrics
 # from src import callbacks
 
-# Standard imports
-import os
-import sys
-import yaml
-import logging
-import logging.config
-
-
-import torch
-import torch.nn as nn
-import torch.optim as optimizers
-from torch.utils.tensorboard import SummaryWriter
-import matplotlib.pyplot as plt
-
-# Local imports
-from src import models
-from src import data
-from src import utils
-# from src import optimizers
-# from src import metrics
-# from src import callbacks
 
 class Trainer:
     def __init__(self, config):
@@ -56,6 +35,7 @@ class Trainer:
         log_config_dict["handlers"]["file"]["filename"] = os.path.join(logdir, "training.log")
         logging.config.dictConfig(log_config_dict)
         self.logger = logging.getLogger("train")
+        self.logger.info(f"Training on {self.device}")
 
         self.logger.info(f"Logdir: {logdir}")
         with open(os.path.join(logdir, "config.yaml"), 'w') as f:
@@ -67,14 +47,14 @@ class Trainer:
         # if seed is not None: utils.set_seed(seed) # TODO: Uncomment for reproductibilty
 
         self.writer = SummaryWriter(log_dir=logdir)
+
         if "neptune" in self.config:
             self.neptune_run = neptune.init_run(project=self.config["neptune"])
-            self.neptune_run["config"] = self.config
             self.logger.info(f"Neptune: {self.config['neptune']}")
-
 
     def get_config_item(self, name: str):
         args = self.config.get(name)
+        if args is None: return None, None
         assert args is not None, f"{name} does not appear in config file"
         name = args.get("class")
         params = args.get("params", {})
@@ -87,8 +67,11 @@ class Trainer:
         self.configure_metrics()
         self.configure_callbacks()
 
+        if "neptune" in self.config:
+            neptune_config = {k:v if not isinstance(v, list) else "[" + ",".join(str(v)) + "]" for k,v in self.config.items()}
+            self.neptune_run["config"] = neptune_config
+
         utils.get_summary(self)
-        # TODO: add metrics
         self.results = {"loss": []}
 
         self.epoch = 0
@@ -104,22 +87,24 @@ class Trainer:
         assert klass is not None, f"Class {klass_name} is not defined in data"
         self.data = klass(**params)
         self.logger.info(f"Dataset: {self.data}")
-        # TODO: Uncomment for custom dataset
         # self.data.split()
         self.train_dataloader = self.data.train_dataloader()
         self.eval_dataloader = self.data.eval_dataloader()
+        self.config["data"]["params"] = {**self.config["data"]["params"], **getattr(self.data, "params", {})}
+        self.logger.info(f"Train dataset size: {len(self.train_dataloader.dataset)}")
+        self.logger.info(f"Eval dataset size: {len(self.eval_dataloader.dataset)}")
 
     def prepare_model(self):
         klass_name, params = self.get_config_item(name="loss")
         klass = getattr(nn, klass_name, None) # nn package
         assert klass is not None, f"Class {klass_name} is not defined in nn"
-        self.criterion = klass(**params)
-        self.logger.info(f"Loss: {self.criterion}")
+        self.loss = klass(**params)
+        self.logger.info(f"Loss: {self.loss}")
 
         klass_name, params = self.get_config_item(name="model")
         klass = getattr(models, klass_name, None) # models package
         assert klass is not None, f"Class {klass_name} is not defined in models"
-        self.model = klass(**params)
+        self.model = klass(**params).to(self.device)
         self.logger.info(f"Model:\n{self.model}")
 
     def configure_optimizers(self):
@@ -131,7 +116,18 @@ class Trainer:
         klass = getattr(optimizers, klass_name, None) # optimizers package
         assert klass is not None, f"Class {klass_name} is not defined in optimizers"
         self.optimizer= klass(**params)
-        self.logger.info(f"Optimizers: {self.optimizer}")
+        self.logger.info(f"Optimizer: {self.optimizer}")
+        klass_name, params = self.get_config_item(name="lr_scheduler")
+        if klass_name is not None:
+            params = {
+                "optimizer": self.optimizer,
+                **params
+            }
+            klass = getattr(torch.optim.lr_scheduler, klass_name, None) # optimizers package
+            if klass is None:
+                klass = getattr(schedulers, klass_name, None) # optimizers package
+            self.lr_scheduler = klass(**params)
+            self.logger.info(f"Learning rate scheduler: {self.lr_scheduler}")
 
     def configure_metrics(self):
         names = self.config.get("metrics")
@@ -150,31 +146,38 @@ class Trainer:
         # DO the same for metrics
         total_metrics = {n:0. for n in self.metric_funcs}
         for i, batch in enumerate(self.train_dataloader):
+            batch = [a.to(self.device) for a in batch]
             output = self.model(*batch[:-1])
-            loss = self.criterion(output, batch[-1])
+            # TODO: if classification
+            # pred = (torch.sigmoid(output) > 0.5).int()
+            # loss = self.loss(output, batch[-1])
+            # TODO: regression
+            pred = output
+            loss = self.loss(output, batch[-1])
+
             self.optimizer.zero_grad()
             loss.backward()
             self.optimizer.step()
 
             epoch_loss += loss.item()*batch[0].size(0)
             num_samples += batch[0].size(0)
-            # TODO: change output with pred (we may need to apply sigmoid for example)
-            train_metrics = self.compute_metrics(y_true=batch[-1], y_pred=output)
+            train_metrics = self.compute_metrics(y_true=batch[-1], y_pred=pred)
             for k in train_metrics:
                 total_metrics[k] += batch[0].size(0)*train_metrics[k]
 
             self.writer.add_scalar(tag="Loss/train",
-                                    scalar_value=epoch_loss / num_samples,
-                                    global_step=self.epoch * len(self.train_dataloader) + i)
+                scalar_value=epoch_loss / num_samples,
+                global_step=self.epoch * len(self.train_dataloader) + i)
+
             if hasattr(self, "neptune_run"):
                 self.neptune_run["train/Loss"].append(epoch_loss / num_samples)
 
             metrics_summary = ""
             for k in total_metrics:
                 v = total_metrics[k]/num_samples
-                self.writer.add_scalar(tag=f"{k.title()}/train",
-                                       scalar_value=v,
-                                       global_step=self.epoch * len(self.train_dataloader) + i)
+                self.writer.add_scalar(tag=f"{k.title()}/train", scalar_value=v,
+                    global_step=self.epoch * len(self.train_dataloader) + i)
+
                 if hasattr(self, "neptune_run"):
                     self.neptune_run[f"train/{k.title()}"].append(v)
                 metrics_summary += f", train_{k}: {v:.3f}"
@@ -183,6 +186,8 @@ class Trainer:
                 self.epoch+1, self.config["epochs"], i+1,
                 len(self.train_dataloader), epoch_loss/num_samples, metrics_summary))
 
+        if hasattr(self, "lr_scheduler"): self.lr_scheduler.step()
+
         epoch_loss /= num_samples
         total_metrics = {k: v / num_samples for k, v in total_metrics.items()}
 
@@ -190,30 +195,41 @@ class Trainer:
             return
 
         self.model.eval()
+
         eval_epoch_loss = 0
         num_samples = 0
         total_metrics = {n:0. for n in self.metric_funcs}
+
         for i, batch in enumerate(self.eval_dataloader):
+            batch = [a.to(self.device) for a in batch]
             with torch.no_grad():
                 output = self.model(*batch[:-1])
+                # TODO: if classification
                 # pred = (torch.sigmoid(output) > 0.5).int()
-                loss = self.criterion(output, batch[-1])
+                # loss = self.loss(output, batch[-1])
+                # TODO: regression
+                pred = output
+                loss = self.loss(output, batch[-1])
+
             eval_epoch_loss += loss.item()*batch[0].shape[0]
             num_samples += batch[0].shape[0]
-            # TODO: change output with pred (we may need to apply sigmoid for example)
-            eval_metrics = self.compute_metrics(y_true=batch[-1], y_pred=output)
+            eval_metrics = self.compute_metrics(y_true=batch[-1], y_pred=pred)
+
             for k in eval_metrics:
                 total_metrics[k] += batch[0].size(0)*eval_metrics[k]
+
             self.writer.add_scalar(tag="Loss/eval",
-                                    scalar_value=eval_epoch_loss / num_samples,
-                                    global_step=self.epoch * len(self.eval_dataloader) + i)
+                scalar_value=eval_epoch_loss / num_samples,
+                global_step=self.epoch * len(self.eval_dataloader) + i)
+
             if hasattr(self, "neptune_run"):
                 self.neptune_run["eval/Loss"].append(eval_epoch_loss / num_samples)
+
             for k in total_metrics:
                 v = total_metrics[k]/num_samples
-                self.writer.add_scalar(tag=f"{k.title()}/eval",
-                                       scalar_value=v,
-                                       global_step=self.epoch * len(self.train_dataloader) + i)
+                self.writer.add_scalar(tag=f"{k.title()}/eval", scalar_value=v,
+                    global_step=self.epoch * len(self.train_dataloader) + i)
+
                 if hasattr(self, "neptune_run"):
                     self.neptune_run[f"eval/{k.title()}"].append(v)
 
@@ -221,5 +237,14 @@ class Trainer:
         total_metrics = {k: v / num_samples for k, v in total_metrics.items()}
 
         utils.save_results(self, "loss", epoch_loss, eval_epoch_loss)
-        self.logger.info("[End epoch %d/%d], eval_loss: %5.3f, %s" % (self.epoch+1, self.config["epochs"], eval_epoch_loss,
-                                                                      ", ".join([f"eval_{k}: {v:.3f}" for k,v in total_metrics.items()])))
+
+        self.writer.add_scalar(tag="Lr/train", global_step=self.epoch,
+            scalar_value=self.optimizer.param_groups[0]['lr'])
+        if hasattr(self, "neptune_run"):
+            self.neptune_run[f"train/Lr"].append(self.optimizer.param_groups[0]['lr'])
+
+        self.logger.info("[End epoch %d/%d], eval_loss: %5.3f, %s, %s" % (
+            self.epoch+1, self.config["epochs"], eval_epoch_loss,
+            ", ".join([f"eval_{k}: {v:.3f}" for k,v in total_metrics.items()]),
+            f"lr: {self.optimizer.param_groups[0]['lr']}"))
+
