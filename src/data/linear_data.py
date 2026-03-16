@@ -4,9 +4,9 @@ import torch
 import matplotlib.pyplot as plt
 
 # Local imports
-from src.data import data_module
+from src.data.data_module import DataModule
 
-class LinearDataset(data_module.DataModule):
+class LinearDataset(DataModule):
     def __init__(self, w, b, noise=0.1, n: int = 1000, root=None, train_batch_size=8, eval_batch_size=4, num_workers=4):
         super().__init__(root=root, train_batch_size=train_batch_size,
                          eval_batch_size=eval_batch_size, num_workers=num_workers)
